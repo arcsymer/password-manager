@@ -1,0 +1,178 @@
+# pwman — Password Manager
+
+[![CI](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml)
+![tests: 28 passing](https://img.shields.io/badge/tests-28%20passing-brightgreen)
+
+> **Warning**
+> This is a learning/portfolio project — NOT security-audited, do **not** use for real secrets.
+
+A command-line password manager written in C++17. Demonstrates safe use of
+[libsodium](https://libsodium.org/) for authenticated encryption (Argon2id + XSalsa20-Poly1305),
+RFC 6238 TOTP, and clean library/CLI separation — with zero custom cryptographic code.
+
+---
+
+## Problem / Solution
+
+**Problem:** Storing credentials on disk requires both strong key derivation (resisting offline
+brute-force) and authenticated encryption (detecting tampering or a wrong password without
+revealing plaintext). TOTP two-factor tokens must match the RFC 6238 standard exactly.
+
+**Solution:**
+- Argon2id (libsodium `crypto_pwhash`) derives a 256-bit key from the master password and a
+  random 16-byte salt, with INTERACTIVE memory/ops limits.
+- XSalsa20-Poly1305 (`crypto_secretbox_easy`) encrypts the serialised vault with a random 24-byte
+  nonce. The MAC catches any wrong-password or corruption condition before any plaintext is returned.
+- TOTP uses libsodium `crypto_auth_hmacsha1` to implement RFC 4226/6238 deterministically, verified
+  against the official test vectors in Appendix B of RFC 6238.
+
+---
+
+## Security design
+
+| Layer        | Primitive                                | Library               |
+|--------------|------------------------------------------|-----------------------|
+| KDF          | Argon2id (INTERACTIVE ops/mem)           | libsodium `crypto_pwhash` |
+| Encryption   | XSalsa20-Poly1305 (authenticated)        | libsodium `crypto_secretbox_easy` |
+| TOTP MAC     | HMAC-SHA1                                | libsodium `crypto_auth_hmacsha1` |
+| CSPRNG       | OS-seeded                                | libsodium `randombytes_buf/uniform` |
+
+**No custom cryptography** — every primitive comes directly from libsodium.
+
+### Vault file format
+
+```
+[salt: 16 bytes (crypto_pwhash_SALTBYTES)]
+[nonce: 24 bytes (crypto_secretbox_NONCEBYTES)]
+[ciphertext: plaintext_len + 16 bytes MAC (crypto_secretbox_MACBYTES)]
+```
+
+A wrong password causes `crypto_secretbox_open_easy` to return -1; the library throws
+`pwman::DecryptionError` before any plaintext is produced.
+
+---
+
+## Architecture
+
+```
+password-manager/
+├── core/                  # pwman-core (static library)
+│   ├── include/pwman/
+│   │   ├── entry.hpp      # Entry struct (id, name, username, url, tags, password, notes)
+│   │   ├── vault.hpp      # Vault class — add/remove/find/search
+│   │   ├── crypto.hpp     # serialize/deserialize + encrypt_vault/decrypt_vault + file I/O
+│   │   ├── totp.hpp       # totp() + totp_string() + base32_encode/decode
+│   │   └── generator.hpp  # generate_password()
+│   └── src/               # Implementations
+├── cli/                   # pwman-cli (executable)
+│   └── src/main.cpp       # Argument parser + command dispatch
+├── tests/                 # pwman-tests (Catch2 v3, via FetchContent)
+│   ├── test_totp.cpp      # RFC 6238 vectors
+│   ├── test_base32.cpp    # RFC 4648 vectors
+│   ├── test_crypto.cpp    # Round-trip + wrong-password + tamper
+│   └── test_vault.cpp     # add/remove/find/search
+├── scripts/demo.sh        # Non-interactive CI demo
+└── .github/workflows/ci.yml
+```
+
+**Dependencies:**
+- libsodium (system, `libsodium-dev` on Ubuntu)
+- Catch2 v3.5.4 (fetched by CMake FetchContent, no system install required)
+
+---
+
+## Build
+
+```bash
+# Ubuntu / Debian
+sudo apt-get install -y libsodium-dev cmake build-essential pkg-config
+
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+---
+
+## Tests
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+28 test cases across 4 files:
+
+| File             | Count | What is covered                                                          |
+|------------------|-------|--------------------------------------------------------------------------|
+| test_totp.cpp    | 3     | RFC 6238 SHA1 vectors (6 timesteps), default params, invalid arg throws  |
+| test_base32.cpp  | 5     | RFC 4648 encode + decode vectors, case-insensitive decode, error, round-trip |
+| test_crypto.cpp  | 7     | Serialise round-trip, empty vault, minimal entry, encrypt/decrypt, wrong password, truncated input, random salt uniqueness |
+| test_vault.cpp   | 13    | add (ids), find, remove, search by name/username/url/tags, case-insensitivity, empty vault, no matches |
+
+### RFC 6238 SHA1 test vectors (Appendix B)
+
+Key: raw bytes of ASCII `"12345678901234567890"`, digits=8, period=30:
+
+| Unix time       | Expected code |
+|-----------------|---------------|
+| 59              | 94287082      |
+| 1111111109      | 07081804      |
+| 1111111111      | 14050471      |
+| 1234567890      | 89005924      |
+| 2000000000      | 69279037      |
+| 20000000000     | 65353130      |
+
+---
+
+## Usage
+
+### Vault operations
+
+```bash
+# Create vault and add entries (synthetic example)
+pwman-cli --vault my.vault --password masterpass add \
+    --name "GitHub" --username "alice@example.com" \
+    --url "https://github.com" --password-entry "s3cr3t" --tags "dev,work"
+
+# List all entries
+pwman-cli --vault my.vault --password masterpass list
+
+# Search (case-insensitive, matches name/username/url/tags)
+pwman-cli --vault my.vault --password masterpass search dev
+
+# Remove by id
+pwman-cli --vault my.vault --password masterpass remove 1
+
+# Verify master password
+pwman-cli --vault my.vault --password masterpass unlock
+```
+
+### TOTP
+
+```bash
+# Decode a Base32 TOTP secret and generate current code
+pwman-cli totp --secret JBSWY3DPEHPK3PXP --digits 6 --period 30
+
+# With fixed time (for testing)
+pwman-cli totp --secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --digits 8 --time 59
+# → 94287082
+```
+
+### Password generator
+
+```bash
+pwman-cli generate --length 20
+pwman-cli generate --length 16 --no-symbols
+pwman-cli generate --length 12 --no-symbols --no-digits
+```
+
+---
+
+## CI demo session
+
+<!-- CLI session: filled from real CI run by orchestrator -->
+
+---
+
+## License
+
+MIT
