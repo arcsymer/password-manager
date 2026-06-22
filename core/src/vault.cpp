@@ -47,6 +47,13 @@ std::optional<Entry> Vault::find(uint64_t id) const {
     return *it;
 }
 
+void Vault::restore(Entry e) {
+    if (e.id >= next_id_) {
+        next_id_ = e.id + 1;
+    }
+    entries_.push_back(std::move(e));
+}
+
 std::vector<Entry> Vault::search(const std::string& query) const {
     if (query.empty()) {
         return entries_;

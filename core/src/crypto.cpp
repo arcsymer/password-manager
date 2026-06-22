@@ -146,8 +146,8 @@ Vault deserialize(const std::vector<uint8_t>& data) {
             }
         }
 
-        // Re-insert preserving original id; adjust internal counter.
-        vault.add(std::move(e));
+        // Restore entry with its original id; vault.restore() keeps next_id_ consistent.
+        vault.restore(std::move(e));
     }
     return vault;
 }

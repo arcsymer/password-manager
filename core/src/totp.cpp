@@ -88,11 +88,14 @@ uint32_t totp(const std::vector<uint8_t>& key,
     T_be[6] = static_cast<uint8_t>((T >>  8) & 0xFF);
     T_be[7] = static_cast<uint8_t>( T        & 0xFF);
 
-    // HMAC-SHA1: output is 20 bytes.
-    uint8_t mac[crypto_auth_hmacsha1_BYTES]; // 20
-    if (crypto_auth_hmacsha1(mac,
-                             T_be, sizeof(T_be),
-                             key.data(), key.size()) != 0) {
+    // HMAC-SHA1 via the streaming API, which accepts variable-length keys.
+    // (crypto_auth_hmacsha1() requires exactly crypto_auth_hmacsha1_KEYBYTES;
+    //  RFC 6238 test vectors use 20-byte keys, so we use the state-based form.)
+    uint8_t mac[crypto_auth_hmacsha1_BYTES]; // 20 bytes
+    crypto_auth_hmacsha1_state st;
+    if (crypto_auth_hmacsha1_init(&st, key.data(), key.size()) != 0 ||
+        crypto_auth_hmacsha1_update(&st, T_be, sizeof(T_be))   != 0 ||
+        crypto_auth_hmacsha1_final(&st, mac)                   != 0) {
         throw std::runtime_error("HMAC-SHA1 failed");
     }
 

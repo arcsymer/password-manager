@@ -34,6 +34,10 @@ public:
     bool operator==(const Vault& o) const noexcept { return entries_ == o.entries_; }
     bool operator!=(const Vault& o) const noexcept { return !(*this == o); }
 
+    // For use by deserialize() only: insert an entry with a pre-existing id,
+    // keeping next_id_ ahead of all restored ids.
+    void restore(Entry e);
+
 private:
     std::vector<Entry> entries_;
     uint64_t next_id_{1};
