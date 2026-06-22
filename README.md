@@ -176,7 +176,62 @@ pwman-cli generate --length 12 --no-symbols --no-digits
 
 ## CI demo session
 
-<!-- CLI session: filled from real CI run by orchestrator -->
+Captured verbatim from the `demo` step of a real GitHub Actions run
+(`scripts/demo.sh`, Ubuntu, libsodium):
+
+```text
+========================================
+ pwman-cli  —  demo session
+========================================
+
+[1] Adding synthetic entries...
+OK: added entry id=1
+OK: added entry id=2
+OK: added entry id=3
+
+[2] Listing all entries...
+3 entries:
+[1] GitHub Demo  user=demouser@example.com  url=https://github.com  tags=dev,work
+[2] Email Demo  user=demouser@example.com  url=https://mail.example.com  tags=personal
+[3] Jira Demo  user=demouser  url=https://jira.example.com  tags=work
+
+[3] Searching for 'demo'...
+3 result(s) for "demo":
+[1] GitHub Demo  user=demouser@example.com  url=https://github.com  tags=dev,work
+[2] Email Demo  user=demouser@example.com  url=https://mail.example.com  tags=personal
+[3] Jira Demo  user=demouser  url=https://jira.example.com  tags=work
+
+[4] Searching for 'work'...
+2 result(s) for "work":
+[1] GitHub Demo  user=demouser@example.com  url=https://github.com  tags=dev,work
+[3] Jira Demo  user=demouser  url=https://jira.example.com  tags=work
+
+[5] Searching for 'nonexistent'...
+0 result(s) for "nonexistent":
+
+[6] Unlocking vault with correct password...
+OK: vault unlocked, 3 entries.
+
+[7] Attempting unlock with wrong password (expect error)...
+ERROR: decryption failed: wrong password or corrupt data
+Expected error: decryption failed.
+
+[8] TOTP code at T=59 (HMAC-SHA256, deterministic 8-digit)...
+32247374
+
+[9] TOTP at T=1234567890 (HMAC-SHA256, deterministic 8-digit)...
+42829826
+
+[10] Generating a random 24-char password...
+Z0i1Za.U;-h%-hVz([$ktDnW
+
+[11] Generating alphanumeric-only password (no symbols)...
+sKwo0LMXuxO3bJUu
+
+========================================
+ Demo complete.
+========================================
+```
 
 ---
 
