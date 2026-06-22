@@ -1,0 +1,43 @@
+# Build output
+build/
+out/
+cmake-build-*/
+
+# Compiled object files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+_deps/
+
+# Vault / database files — NEVER commit real secrets
+*.vault
+*.db
+*.pwdb
+
+# IDE / editor
+.vscode/
+.idea/
+*.user
+*.suo
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Coverage / profiling
+*.gcda
+*.gcno
+coverage.info
+coverage/
