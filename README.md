@@ -23,8 +23,9 @@ revealing plaintext). TOTP two-factor tokens must match the RFC 6238 standard ex
   random 16-byte salt, with INTERACTIVE memory/ops limits.
 - XSalsa20-Poly1305 (`crypto_secretbox_easy`) encrypts the serialised vault with a random 24-byte
   nonce. The MAC catches any wrong-password or corruption condition before any plaintext is returned.
-- TOTP uses libsodium `crypto_auth_hmacsha1` to implement RFC 4226/6238 deterministically, verified
-  against the official test vectors in Appendix B of RFC 6238.
+- TOTP uses libsodium `crypto_auth_hmacsha256` to implement RFC 4226/6238 deterministically, verified
+  against the official SHA-256 test vectors in Appendix B of RFC 6238.
+  libsodium intentionally does not expose HMAC-SHA1; RFC 6238 permits SHA-256 as the PRF.
 
 ---
 
@@ -34,10 +35,16 @@ revealing plaintext). TOTP two-factor tokens must match the RFC 6238 standard ex
 |--------------|------------------------------------------|-----------------------|
 | KDF          | Argon2id (INTERACTIVE ops/mem)           | libsodium `crypto_pwhash` |
 | Encryption   | XSalsa20-Poly1305 (authenticated)        | libsodium `crypto_secretbox_easy` |
-| TOTP MAC     | HMAC-SHA1                                | libsodium `crypto_auth_hmacsha1` |
+| TOTP MAC     | HMAC-SHA256                              | libsodium `crypto_auth_hmacsha256` |
 | CSPRNG       | OS-seeded                                | libsodium `randombytes_buf/uniform` |
 
 **No custom cryptography** — every primitive comes directly from libsodium.
+
+> **TOTP compatibility note:** libsodium intentionally does not expose SHA-1 (considered
+> cryptographically weak). TOTP therefore uses HMAC-SHA256, which RFC 6238 explicitly allows.
+> Most consumer authenticator apps (Google Authenticator, Authy, etc.) default to HMAC-SHA1,
+> so codes generated here will not match a standard SHA-1 authenticator for the same secret.
+> This is a conscious trade-off of this portfolio project: zero dependencies beyond libsodium.
 
 ### Vault file format
 
@@ -103,23 +110,23 @@ ctest --test-dir build --output-on-failure
 
 | File             | Count | What is covered                                                          |
 |------------------|-------|--------------------------------------------------------------------------|
-| test_totp.cpp    | 3     | RFC 6238 SHA1 vectors (6 timesteps), default params, invalid arg throws  |
+| test_totp.cpp    | 3     | RFC 6238 SHA-256 vectors (6 timesteps), default params, invalid arg throws |
 | test_base32.cpp  | 5     | RFC 4648 encode + decode vectors, case-insensitive decode, error, round-trip |
 | test_crypto.cpp  | 7     | Serialise round-trip, empty vault, minimal entry, encrypt/decrypt, wrong password, truncated input, random salt uniqueness |
 | test_vault.cpp   | 13    | add (ids), find, remove, search by name/username/url/tags, case-insensitivity, empty vault, no matches |
 
-### RFC 6238 SHA1 test vectors (Appendix B)
+### RFC 6238 SHA-256 test vectors (Appendix B)
 
-Key: raw bytes of ASCII `"12345678901234567890"`, digits=8, period=30:
+Key: raw bytes of ASCII `"12345678901234567890123456789012"` (32 bytes), digits=8, period=30:
 
 | Unix time       | Expected code |
 |-----------------|---------------|
-| 59              | 94287082      |
-| 1111111109      | 07081804      |
-| 1111111111      | 14050471      |
-| 1234567890      | 89005924      |
-| 2000000000      | 69279037      |
-| 20000000000     | 65353130      |
+| 59              | 46119246      |
+| 1111111109      | 68084774      |
+| 1111111111      | 67062674      |
+| 1234567890      | 91819424      |
+| 2000000000      | 90698825      |
+| 20000000000     | 77737706      |
 
 ---
 
@@ -152,9 +159,9 @@ pwman-cli --vault my.vault --password masterpass unlock
 # Decode a Base32 TOTP secret and generate current code
 pwman-cli totp --secret JBSWY3DPEHPK3PXP --digits 6 --period 30
 
-# With fixed time (for testing)
-pwman-cli totp --secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --digits 8 --time 59
-# → 94287082
+# With fixed time (for testing — SHA-256 vector from RFC 6238 Appendix B)
+pwman-cli totp --secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --digits 8 --time 59
+# → 46119246  (HMAC-SHA256; differs from SHA-1 authenticators by design)
 ```
 
 ### Password generator

@@ -1,9 +1,9 @@
 #include "pwman/totp.hpp"
 
+// libsodium deliberately does not expose HMAC-SHA1. The umbrella <sodium.h>
+// provides HMAC-SHA256 via crypto_auth_hmacsha256, which is used here.
+// RFC 6238 explicitly permits SHA-256 as the underlying PRF.
 #include <sodium.h>
-// The umbrella <sodium.h> exposes HMAC-SHA256/512 but not HMAC-SHA1, which
-// RFC 6238's reference vectors require. Pull the SHA1 header explicitly.
-#include <sodium/crypto_auth_hmacsha1.h>
 
 #include <algorithm>
 #include <cstring>
@@ -66,7 +66,7 @@ std::vector<uint8_t> base32_decode(const std::string& encoded) {
 }
 
 // ---------------------------------------------------------------------------
-// TOTP — RFC 6238 / RFC 4226
+// TOTP — RFC 6238 / RFC 4226 (using HMAC-SHA256)
 // ---------------------------------------------------------------------------
 uint32_t totp(const std::vector<uint8_t>& key,
               uint64_t                    unix_time,
@@ -91,19 +91,22 @@ uint32_t totp(const std::vector<uint8_t>& key,
     T_be[6] = static_cast<uint8_t>((T >>  8) & 0xFF);
     T_be[7] = static_cast<uint8_t>( T        & 0xFF);
 
-    // HMAC-SHA1 via the streaming API, which accepts variable-length keys.
-    // (crypto_auth_hmacsha1() requires exactly crypto_auth_hmacsha1_KEYBYTES;
-    //  RFC 6238 test vectors use 20-byte keys, so we use the state-based form.)
-    uint8_t mac[crypto_auth_hmacsha1_BYTES]; // 20 bytes
-    crypto_auth_hmacsha1_state st;
-    if (crypto_auth_hmacsha1_init(&st, key.data(), key.size()) != 0 ||
-        crypto_auth_hmacsha1_update(&st, T_be, sizeof(T_be))   != 0 ||
-        crypto_auth_hmacsha1_final(&st, mac)                   != 0) {
-        throw std::runtime_error("HMAC-SHA1 failed");
+    // HMAC-SHA256 via the libsodium streaming API.
+    // crypto_auth_hmacsha256_init accepts variable-length keys, so Base32
+    // secrets of any decoded length are handled correctly.
+    // libsodium does not expose HMAC-SHA1; HMAC-SHA256 is used instead
+    // (RFC 6238 §1.2 explicitly lists SHA-256 as a supported algorithm).
+    uint8_t mac[crypto_auth_hmacsha256_BYTES]; // 32 bytes
+    crypto_auth_hmacsha256_state st;
+    if (crypto_auth_hmacsha256_init(&st, key.data(), key.size()) != 0 ||
+        crypto_auth_hmacsha256_update(&st, T_be, sizeof(T_be))   != 0 ||
+        crypto_auth_hmacsha256_final(&st, mac)                   != 0) {
+        throw std::runtime_error("HMAC-SHA256 failed");
     }
 
     // Dynamic truncation (RFC 4226 §5.4).
-    const uint8_t offset = mac[crypto_auth_hmacsha1_BYTES - 1] & 0x0F;
+    // offset is derived from the last byte of the 32-byte SHA-256 MAC.
+    const uint8_t offset = mac[crypto_auth_hmacsha256_BYTES - 1] & 0x0F;
     const uint32_t P =
         (static_cast<uint32_t>(mac[offset    ]) << 24)
       | (static_cast<uint32_t>(mac[offset + 1]) << 16)
