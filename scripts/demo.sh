@@ -73,14 +73,15 @@ echo "[7] Attempting unlock with wrong password (expect error)..."
 "$CLI" --vault "$VAULT" --password "wrong-password" unlock && echo "UNEXPECTED: succeeded" || echo "Expected error: decryption failed."
 echo ""
 
-# ---- TOTP (RFC 6238 SHA1 seed, deterministic) ----
-# Key: ASCII "12345678901234567890" → Base32 = GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
+# ---- TOTP (HMAC-SHA256, deterministic) ----
+# Demo secret (Base32). TOTP here uses HMAC-SHA256 (libsodium has no SHA-1);
+# the exact RFC 6238 SHA-256 reference vectors are checked in the unit tests.
 TOTP_SECRET="GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
-echo "[8] TOTP code for RFC 6238 test secret at T=59 (expect 8-digit: 94287082)..."
+echo "[8] TOTP code at T=59 (HMAC-SHA256, deterministic 8-digit)..."
 "$CLI" totp --secret "$TOTP_SECRET" --digits 8 --period 30 --time 59
 echo ""
 
-echo "[9] TOTP at T=1234567890 (expect 8-digit: 89005924)..."
+echo "[9] TOTP at T=1234567890 (HMAC-SHA256, deterministic 8-digit)..."
 "$CLI" totp --secret "$TOTP_SECRET" --digits 8 --period 30 --time 1234567890
 echo ""
 
