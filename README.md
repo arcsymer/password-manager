@@ -1,7 +1,7 @@
 # pwman — Password Manager
 
 [![CI](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml)
-![tests: 28 passing](https://img.shields.io/badge/tests-28%20passing-brightgreen)
+![tests: 53 passing](https://img.shields.io/badge/tests-53%20passing-brightgreen)
 
 This is a learning and portfolio project. It hasn't been through a security audit, so
 please don't use it for real secrets.
@@ -31,31 +31,124 @@ revealing plaintext). TOTP two-factor tokens have to match the RFC 6238 standard
 
 ## Security design
 
-| Layer        | Primitive                                | Library               |
-|--------------|------------------------------------------|-----------------------|
-| KDF          | Argon2id (INTERACTIVE ops/mem)           | libsodium `crypto_pwhash` |
-| Encryption   | XSalsa20-Poly1305 (authenticated)        | libsodium `crypto_secretbox_easy` |
-| TOTP MAC     | HMAC-SHA256                              | libsodium `crypto_auth_hmacsha256` |
-| CSPRNG       | OS-seeded                                | libsodium `randombytes_buf/uniform` |
+### Cryptographic primitives
+
+| Layer        | Primitive                                | Library call                        |
+|--------------|------------------------------------------|-------------------------------------|
+| KDF          | Argon2id (INTERACTIVE ops/mem)           | `crypto_pwhash`                     |
+| Encryption   | XSalsa20-Poly1305 (authenticated)        | `crypto_secretbox_easy`             |
+| TOTP MAC     | HMAC-SHA256                              | `crypto_auth_hmacsha256`            |
+| CSPRNG       | OS-seeded                                | `randombytes_buf` / `randombytes_uniform` |
+| Key wipe     | Compiler-resistant zero                  | `sodium_memzero`                    |
 
 No custom cryptography: every primitive comes straight from libsodium.
 
-TOTP compatibility note: libsodium doesn't expose SHA-1 (considered cryptographically
-weak), so TOTP here uses HMAC-SHA256, which RFC 6238 allows. Most consumer authenticator
-apps (Google Authenticator, Authy, and so on) default to HMAC-SHA1, so codes generated
-here won't match a standard SHA-1 authenticator for the same secret. That's a deliberate
-trade-off to keep the only dependency libsodium.
+### KDF parameters
 
-### Vault file format
+| Parameter    | Value                               | Rationale                                    |
+|--------------|-------------------------------------|----------------------------------------------|
+| Algorithm    | Argon2id                            | Resists both GPU and side-channel attacks    |
+| `opslimit`   | `crypto_pwhash_OPSLIMIT_INTERACTIVE`| ~3–4 iterations on a modern CPU             |
+| `memlimit`   | `crypto_pwhash_MEMLIMIT_INTERACTIVE`| 64 MiB memory hard                          |
+| Key length   | 32 bytes (256 bits)                 | Matches XSalsa20-Poly1305 key size          |
+| Salt         | 16 bytes, random per save           | Prevents precomputed (rainbow-table) attacks |
+
+### Threat model
+
+| Threat                                           | Mitigated? | How                                              |
+|--------------------------------------------------|------------|--------------------------------------------------|
+| Offline brute-force (attacker gets vault file)   | Yes        | Argon2id with 64 MiB memory cost per guess      |
+| Ciphertext tampering / file corruption           | Yes        | Poly1305 MAC; decryption aborts on any mismatch |
+| Wrong-password oracle leaking plaintext          | Yes        | `decrypt_vault` throws before any plaintext returned |
+| Nonce reuse                                      | Yes        | New random 24-byte nonce on every `save_vault`  |
+| Key reuse across vaults                          | Yes        | Random salt regenerated on every `save_vault`   |
+| Memory disclosure of master password (CLI)       | Partial    | `sodium_memzero` wipes derived key; the master password `std::string` is on the stack and gets the standard destructor — a determined attacker with physical memory access could still find it |
+| In-process plaintext in memory                   | Not mitigated | Decrypted entries live in `std::vector<Entry>` on the heap; no locked/guarded allocator is used |
+| Side-channel timing on MAC verification          | Yes        | libsodium's `crypto_secretbox_open_easy` uses constant-time comparison |
+| Supply-chain attack on libsodium                 | Not mitigated | Relies on the system or MSYS2 libsodium package integrity |
+
+### What is NOT protected
+
+- The **process address space** after decryption: plaintext passwords live in normal heap memory.
+  An attacker with a process memory dump can read them.
+- The **terminal**: passwords passed via `--password <pass>` are visible in `ps` output and
+  shell history. Use `--password -` and pipe from a secure source to mitigate.
+- **Swap / page file**: the OS may page decrypted data to disk. `mlock` / `VirtualLock` are
+  not used (would require platform-specific code and elevated privileges on most systems).
+- **Clipboard**: the optional `--copy` feature is not implemented. If you paste a password
+  from terminal output, the clipboard is outside this tool's control.
+
+### Why HMAC-SHA256 for TOTP (not SHA-1)
+
+RFC 6238 §1.2 lists SHA-1, SHA-256, and SHA-512 as valid PRFs. libsodium deliberately
+omits HMAC-SHA1 because SHA-1 is considered cryptographically weak in general (though it
+is not broken in the HMAC context specifically). Using HMAC-SHA256 keeps libsodium as the
+only dependency and avoids SHA-1 entirely. The trade-off is that codes produced here will
+**not match** codes from consumer authenticator apps (Google Authenticator, Authy, etc.)
+that default to HMAC-SHA1 — this is a known, intentional constraint of this portfolio project.
+
+---
+
+## Vault file format
+
+### Byte layout
+
+```mermaid
+packet-beta
+title Vault file on disk
+0-15: "salt (16 bytes, random, crypto_pwhash_SALTBYTES)"
+16-39: "nonce (24 bytes, random, crypto_secretbox_NONCEBYTES)"
+40-55: "Poly1305 MAC (16 bytes, crypto_secretbox_MACBYTES)"
+56-999: "ciphertext (variable: serialised vault plaintext)"
+```
 
 ```
-[salt: 16 bytes (crypto_pwhash_SALTBYTES)]
-[nonce: 24 bytes (crypto_secretbox_NONCEBYTES)]
-[ciphertext: plaintext_len + 16 bytes MAC (crypto_secretbox_MACBYTES)]
+Offset 0              16             40             56
+       +--------------+--------------+------+------------ ...
+       | salt         | nonce        | MAC  | ciphertext
+       | 16 bytes     | 24 bytes     | 16 B | len(plaintext) bytes
+       +--------------+--------------+------+------------ ...
 ```
 
-A wrong password causes `crypto_secretbox_open_easy` to return -1; the library throws
-`pwman::DecryptionError` before any plaintext is produced.
+### Serialised plaintext format (inside the ciphertext)
+
+```
+[PWMV1\x00\x00\x00]           8 bytes magic
+[entry_count]                  4 bytes little-endian uint32
+For each entry:
+  [0x1F] [id_decimal]          field sep + id as ASCII decimal
+  [0x1F] [name]
+  [0x1F] [username]
+  [0x1F] [url]
+  [0x1F] [password]
+  [0x1F] [notes]
+  [0x1F] [tag1 0x1E tag2 ...]  tags joined with Record Separator
+  [0x1D]                       Group Separator = end of entry
+```
+
+Delimiter bytes (`0x1F` Unit Separator, `0x1E` Record Separator, `0x1D` Group Separator)
+are ASCII control characters that never appear in normal UTF-8 user data, so no escaping
+is needed.
+
+### Encrypt / decrypt flow
+
+```mermaid
+flowchart TD
+    A([Master password + Vault]) --> B[serialize Vault to plaintext bytes]
+    B --> C[randombytes_buf: generate salt + nonce]
+    C --> D["crypto_pwhash(Argon2id)\nkey = KDF(password, salt, 64 MiB)"]
+    D --> E["crypto_secretbox_easy\nciphertext = Enc(key, nonce, plaintext)"]
+    E --> F[sodium_memzero wipe key]
+    F --> G([File: salt || nonce || ciphertext])
+
+    G2([File: salt || nonce || ciphertext]) --> H[Read salt, nonce, ciphertext]
+    H --> I["crypto_pwhash(Argon2id)\nkey = KDF(password, salt, 64 MiB)"]
+    I --> J["crypto_secretbox_open_easy\nverify MAC + decrypt"]
+    J -- MAC ok --> K[deserialize plaintext to Vault]
+    J -- MAC fail --> L([throw DecryptionError])
+    K --> M[sodium_memzero wipe key]
+    M --> N([Vault in memory])
+```
 
 ---
 
@@ -66,18 +159,23 @@ password-manager/
 ├── core/                  # pwman-core (static library)
 │   ├── include/pwman/
 │   │   ├── entry.hpp      # Entry struct (id, name, username, url, tags, password, notes)
-│   │   ├── vault.hpp      # Vault class: add/remove/find/search
-│   │   ├── crypto.hpp     # serialize/deserialize + encrypt_vault/decrypt_vault + file I/O
+│   │   ├── vault.hpp      # Vault: add/remove/find/find_by_name/search/update
+│   │   ├── crypto.hpp     # serialize/deserialize + encrypt/decrypt + file I/O
+│   │   │                  # + export_vault/import_vault + change_password
 │   │   ├── totp.hpp       # totp() + totp_string() + base32_encode/decode
-│   │   └── generator.hpp  # generate_password()
+│   │   └── generator.hpp  # generate_password() + estimate_strength()
 │   └── src/               # Implementations
 ├── cli/                   # pwman-cli (executable)
 │   └── src/main.cpp       # Argument parser + command dispatch
 ├── tests/                 # pwman-tests (Catch2 v3, via FetchContent)
-│   ├── test_totp.cpp      # RFC 6238 vectors
-│   ├── test_base32.cpp    # RFC 4648 vectors
-│   ├── test_crypto.cpp    # Round-trip + wrong-password + tamper
-│   └── test_vault.cpp     # add/remove/find/search
+│   ├── test_totp.cpp          # RFC 6238 vectors
+│   ├── test_base32.cpp        # RFC 4648 vectors
+│   ├── test_crypto.cpp        # Round-trip + wrong-password + tamper
+│   ├── test_vault.cpp         # add/remove/find/search
+│   ├── test_vault_update.cpp  # update + find_by_name
+│   ├── test_strength.cpp      # estimate_strength across all levels
+│   └── test_export_import.cpp # export/import round-trip + change_password
+├── IMPROVEMENT_PLAN.md    # Gap analysis and implementation plan
 ├── scripts/demo.sh        # Non-interactive CI demo
 └── .github/workflows/ci.yml
 ```
@@ -106,14 +204,17 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-28 test cases across 4 files:
+53 test cases across 7 files:
 
-| File             | Count | What is covered                                                          |
-|------------------|-------|--------------------------------------------------------------------------|
-| test_totp.cpp    | 3     | RFC 6238 SHA-256 vectors (6 timesteps), default params, invalid arg throws |
-| test_base32.cpp  | 5     | RFC 4648 encode + decode vectors, case-insensitive decode, error, round-trip |
-| test_crypto.cpp  | 7     | Serialise round-trip, empty vault, minimal entry, encrypt/decrypt, wrong password, truncated input, random salt uniqueness |
-| test_vault.cpp   | 13    | add (ids), find, remove, search by name/username/url/tags, case-insensitivity, empty vault, no matches |
+| File                    | Count | What is covered                                                               |
+|-------------------------|-------|-------------------------------------------------------------------------------|
+| test_totp.cpp           | 3     | RFC 6238 SHA-256 vectors (6 timesteps), default params, invalid arg throws    |
+| test_base32.cpp         | 5     | RFC 4648 encode + decode vectors, case-insensitive decode, error, round-trip  |
+| test_crypto.cpp         | 7     | Serialise round-trip, empty vault, minimal entry, encrypt/decrypt, wrong password, truncated input, random salt uniqueness |
+| test_vault.cpp          | 13    | add (ids), find, remove, search by name/username/url/tags, case-insensitivity, empty vault, no matches |
+| test_vault_update.cpp   | 8     | update (fields, id preserved, other entries unaffected, empty vault), find_by_name (match, case-insensitive, absent, exact-only) |
+| test_strength.cpp       | 9     | estimate_strength across all five levels, label strings, entropy monotonicity  |
+| test_export_import.cpp  | 7     | export/import round-trip, wrong export password, empty vault, random nonce, separate export password, change_password happy path, wrong old password |
 
 ### RFC 6238 SHA-256 test vectors (Appendix B)
 
@@ -135,22 +236,59 @@ Key: raw bytes of ASCII `"12345678901234567890123456789012"` (32 bytes), digits=
 ### Vault operations
 
 ```bash
-# Create vault and add entries (synthetic example)
+# Create vault and add entries
 pwman-cli --vault my.vault --password masterpass add \
     --name "GitHub" --username "alice@example.com" \
     --url "https://github.com" --password-entry "s3cr3t" --tags "dev,work"
 
-# List all entries
+# List all entries (short form — password and notes omitted)
 pwman-cli --vault my.vault --password masterpass list
+
+# Get full details for a single entry (including password and notes)
+pwman-cli --vault my.vault --password masterpass get 1
 
 # Search (case-insensitive, matches name/username/url/tags)
 pwman-cli --vault my.vault --password masterpass search dev
 
-# Remove by id
+# Update specific fields of an existing entry (only supplied flags are changed)
+pwman-cli --vault my.vault --password masterpass update 1 \
+    --username "newalice@example.com" --tags "dev,personal"
+
+# Remove by numeric id
 pwman-cli --vault my.vault --password masterpass remove 1
+
+# Remove by name (case-insensitive exact match)
+pwman-cli --vault my.vault --password masterpass remove-by-name "GitHub"
+
+# Change master password (re-encrypts vault)
+pwman-cli --vault my.vault --password masterpass \
+    change-password --new-password newsecret
 
 # Verify master password
 pwman-cli --vault my.vault --password masterpass unlock
+```
+
+### Export / import
+
+```bash
+# Export vault to a portable encrypted bundle with a separate export password
+pwman-cli --vault my.vault --password masterpass \
+    export --out backup.bundle --export-password backupsecret
+
+# Import bundle into a new vault file
+pwman-cli import --in backup.bundle --export-password backupsecret \
+    --vault restored.vault --password newmaster
+```
+
+### Password strength
+
+```bash
+# Estimate the strength of any password string
+pwman-cli strength "hunter2"
+# → VERY_WEAK (20 bits)
+
+pwman-cli strength "Tr0ub4dor&3!Xy9@ZpQ#"
+# → VERY_STRONG (131 bits)
 ```
 
 ### TOTP
@@ -168,6 +306,10 @@ pwman-cli totp --secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBV
 
 ```bash
 pwman-cli generate --length 20
+# Example output:
+# Tr0ub4dor&3!Xy9@ZpQ#
+# strength: VERY_STRONG (131 bits)
+
 pwman-cli generate --length 16 --no-symbols
 pwman-cli generate --length 12 --no-symbols --no-digits
 ```
@@ -224,9 +366,11 @@ Expected error: decryption failed.
 
 [10] Generating a random 24-char password...
 Z0i1Za.U;-h%-hVz([$ktDnW
+strength: VERY_STRONG (157 bits)
 
 [11] Generating alphanumeric-only password (no symbols)...
 sKwo0LMXuxO3bJUu
+strength: STRONG (95 bits)
 
 ========================================
  Demo complete.
