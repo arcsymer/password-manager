@@ -3,29 +3,29 @@
 [![CI](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml)
 ![tests: 28 passing](https://img.shields.io/badge/tests-28%20passing-brightgreen)
 
-> **Warning**
-> This is a learning/portfolio project — NOT security-audited, do **not** use for real secrets.
+This is a learning and portfolio project. It hasn't been through a security audit, so
+please don't use it for real secrets.
 
-A command-line password manager written in C++17. Demonstrates safe use of
-[libsodium](https://libsodium.org/) for authenticated encryption (Argon2id + XSalsa20-Poly1305),
-RFC 6238 TOTP, and clean library/CLI separation — with zero custom cryptographic code.
+A command-line password manager written in C++17. It uses
+[libsodium](https://libsodium.org/) for authenticated encryption (Argon2id + XSalsa20-Poly1305)
+and RFC 6238 TOTP, keeps the library and CLI separate, and writes no custom crypto of its own.
 
 ---
 
 ## Problem / Solution
 
-**Problem:** Storing credentials on disk requires both strong key derivation (resisting offline
-brute-force) and authenticated encryption (detecting tampering or a wrong password without
-revealing plaintext). TOTP two-factor tokens must match the RFC 6238 standard exactly.
+**Problem:** Storing credentials on disk needs both strong key derivation (to resist offline
+brute-force) and authenticated encryption (to detect tampering or a wrong password without
+revealing plaintext). TOTP two-factor tokens have to match the RFC 6238 standard exactly.
 
 **Solution:**
 - Argon2id (libsodium `crypto_pwhash`) derives a 256-bit key from the master password and a
   random 16-byte salt, with INTERACTIVE memory/ops limits.
 - XSalsa20-Poly1305 (`crypto_secretbox_easy`) encrypts the serialised vault with a random 24-byte
-  nonce. The MAC catches any wrong-password or corruption condition before any plaintext is returned.
-- TOTP uses libsodium `crypto_auth_hmacsha256` to implement RFC 4226/6238 deterministically, verified
-  against the official SHA-256 test vectors in Appendix B of RFC 6238.
-  libsodium intentionally does not expose HMAC-SHA1; RFC 6238 permits SHA-256 as the PRF.
+  nonce. The MAC catches any wrong-password or corruption case before any plaintext is returned.
+- TOTP uses libsodium `crypto_auth_hmacsha256` to implement RFC 4226/6238 deterministically,
+  checked against the official SHA-256 test vectors in Appendix B of RFC 6238.
+  libsodium intentionally does not expose HMAC-SHA1, and RFC 6238 permits SHA-256 as the PRF.
 
 ---
 
@@ -38,13 +38,13 @@ revealing plaintext). TOTP two-factor tokens must match the RFC 6238 standard ex
 | TOTP MAC     | HMAC-SHA256                              | libsodium `crypto_auth_hmacsha256` |
 | CSPRNG       | OS-seeded                                | libsodium `randombytes_buf/uniform` |
 
-**No custom cryptography** — every primitive comes directly from libsodium.
+No custom cryptography: every primitive comes straight from libsodium.
 
-> **TOTP compatibility note:** libsodium intentionally does not expose SHA-1 (considered
-> cryptographically weak). TOTP therefore uses HMAC-SHA256, which RFC 6238 explicitly allows.
-> Most consumer authenticator apps (Google Authenticator, Authy, etc.) default to HMAC-SHA1,
-> so codes generated here will not match a standard SHA-1 authenticator for the same secret.
-> This is a conscious trade-off of this portfolio project: zero dependencies beyond libsodium.
+TOTP compatibility note: libsodium doesn't expose SHA-1 (considered cryptographically
+weak), so TOTP here uses HMAC-SHA256, which RFC 6238 allows. Most consumer authenticator
+apps (Google Authenticator, Authy, and so on) default to HMAC-SHA1, so codes generated
+here won't match a standard SHA-1 authenticator for the same secret. That's a deliberate
+trade-off to keep the only dependency libsodium.
 
 ### Vault file format
 
@@ -66,7 +66,7 @@ password-manager/
 ├── core/                  # pwman-core (static library)
 │   ├── include/pwman/
 │   │   ├── entry.hpp      # Entry struct (id, name, username, url, tags, password, notes)
-│   │   ├── vault.hpp      # Vault class — add/remove/find/search
+│   │   ├── vault.hpp      # Vault class: add/remove/find/search
 │   │   ├── crypto.hpp     # serialize/deserialize + encrypt_vault/decrypt_vault + file I/O
 │   │   ├── totp.hpp       # totp() + totp_string() + base32_encode/decode
 │   │   └── generator.hpp  # generate_password()
@@ -176,7 +176,7 @@ pwman-cli generate --length 12 --no-symbols --no-digits
 
 ## CI demo session
 
-Captured verbatim from the `demo` step of a real GitHub Actions run
+Captured verbatim from the `demo` step of a GitHub Actions run
 (`scripts/demo.sh`, Ubuntu, libsodium):
 
 ```text

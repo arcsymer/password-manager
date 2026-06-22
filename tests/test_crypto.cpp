@@ -32,7 +32,7 @@ static pwman::Vault make_test_vault() {
     return v;
 }
 
-TEST_CASE("Vault serialise → deserialise round-trip", "[crypto][serialise]") {
+TEST_CASE("Vault serialise -> deserialise round-trip", "[crypto][serialise]") {
     const pwman::Vault original = make_test_vault();
     const std::vector<uint8_t> bytes = pwman::serialize(original);
     const pwman::Vault restored = pwman::deserialize(bytes);
@@ -62,7 +62,7 @@ TEST_CASE("Serialise entry with empty optional fields", "[crypto][serialise]") {
     CHECK(restored.entries()[0].tags.empty());
 }
 
-TEST_CASE("Encrypt → decrypt with correct password", "[crypto][encryption]") {
+TEST_CASE("Encrypt -> decrypt with correct password", "[crypto][encryption]") {
     const pwman::Vault original = make_test_vault();
     const std::string  password = "master-password-42";
 
@@ -94,6 +94,6 @@ TEST_CASE("Encrypt produces different ciphertext each call (random salt+nonce)",
 
     const auto c1 = pwman::encrypt_vault(v, "pass");
     const auto c2 = pwman::encrypt_vault(v, "pass");
-    // Salt and nonce are random — outputs must differ.
+    // Salt and nonce are random - outputs must differ.
     CHECK(c1 != c2);
 }
