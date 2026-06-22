@@ -54,6 +54,32 @@ void Vault::restore(Entry e) {
     entries_.push_back(std::move(e));
 }
 
+std::optional<Entry> Vault::find_by_name(const std::string& name) const {
+    const std::string name_lower = to_lower(name);
+    for (const Entry& e : entries_) {
+        if (to_lower(e.name) == name_lower) {
+            return e;
+        }
+    }
+    return std::nullopt;
+}
+
+bool Vault::update(uint64_t id, const Entry& fields) {
+    auto it = std::find_if(entries_.begin(), entries_.end(),
+                           [id](const Entry& e) { return e.id == id; });
+    if (it == entries_.end()) {
+        return false;
+    }
+    // Overwrite all mutable fields; id stays unchanged.
+    it->name     = fields.name;
+    it->username = fields.username;
+    it->url      = fields.url;
+    it->password = fields.password;
+    it->notes    = fields.notes;
+    it->tags     = fields.tags;
+    return true;
+}
+
 std::vector<Entry> Vault::search(const std::string& query) const {
     if (query.empty()) {
         return entries_;

@@ -277,4 +277,29 @@ Vault load_vault(const std::string& path, const std::string& master_password) {
     return decrypt_vault(bytes, master_password);
 }
 
+// ---------------------------------------------------------------------------
+// Change master password
+// ---------------------------------------------------------------------------
+void change_password(const std::string& path,
+                     const std::string& old_password,
+                     const std::string& new_password) {
+    // load_vault already throws DecryptionError / FormatError on bad old_password.
+    const Vault vault = load_vault(path, old_password);
+    save_vault(path, vault, new_password);
+}
+
+// ---------------------------------------------------------------------------
+// Portable export / import
+// ---------------------------------------------------------------------------
+std::vector<uint8_t> export_vault(const Vault& vault,
+                                  const std::string& export_password) {
+    // Identical to encrypt_vault — reuse it to avoid duplication.
+    return encrypt_vault(vault, export_password);
+}
+
+Vault import_vault(const std::vector<uint8_t>& bundle,
+                   const std::string& export_password) {
+    return decrypt_vault(bundle, export_password);
+}
+
 } // namespace pwman

@@ -29,6 +29,15 @@ public:
     // Empty query returns all entries.
     std::vector<Entry> search(const std::string& query) const;
 
+    // Find first entry whose name matches exactly (case-insensitive).
+    // Returns nullopt if not found.
+    std::optional<Entry> find_by_name(const std::string& name) const;
+
+    // Update an existing entry in-place (identified by e.id).
+    // Only fields present in the supplied Entry are modified; id is never changed.
+    // Returns true if the entry was found and updated, false otherwise.
+    bool update(uint64_t id, const Entry& fields);
+
     const std::vector<Entry>& entries() const noexcept { return entries_; }
 
     bool operator==(const Vault& o) const noexcept { return entries_ == o.entries_; }

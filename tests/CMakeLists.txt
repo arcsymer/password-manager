@@ -18,6 +18,9 @@ add_executable(pwman-tests
     test_base32.cpp
     test_crypto.cpp
     test_vault.cpp
+    test_vault_update.cpp
+    test_strength.cpp
+    test_export_import.cpp
 )
 
 target_compile_features(pwman-tests PRIVATE cxx_std_17)

@@ -59,4 +59,30 @@ void  save_vault(const std::string& path, const Vault& vault,
 Vault load_vault(const std::string& path,
                  const std::string& master_password);
 
+// ---------------------------------------------------------------------------
+// Change master password
+// ---------------------------------------------------------------------------
+// Decrypt the vault with old_password, re-encrypt with new_password, and
+// write the result back to the same path atomically (via a temp file swap).
+// Throws DecryptionError if old_password is wrong, or std::runtime_error on
+// I/O failure.
+void change_password(const std::string& path,
+                     const std::string& old_password,
+                     const std::string& new_password);
+
+// ---------------------------------------------------------------------------
+// Portable export / import (encrypted bundle)
+// ---------------------------------------------------------------------------
+// Export: serialize + encrypt the vault with export_password.
+// The resulting bytes use the SAME on-disk layout as encrypt_vault(), so the
+// bundle can be loaded directly with load_vault() / decrypt_vault().
+// Use a different export_password from the master password for separation.
+std::vector<uint8_t> export_vault(const Vault& vault,
+                                  const std::string& export_password);
+
+// Import: decrypt and deserialize an exported bundle.
+// Identical to decrypt_vault(); provided as a named alias for clarity.
+Vault import_vault(const std::vector<uint8_t>& bundle,
+                   const std::string& export_password);
+
 } // namespace pwman
