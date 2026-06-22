@@ -1,6 +1,9 @@
 #include "pwman/totp.hpp"
 
 #include <sodium.h>
+// The umbrella <sodium.h> exposes HMAC-SHA256/512 but not HMAC-SHA1, which
+// RFC 6238's reference vectors require. Pull the SHA1 header explicitly.
+#include <sodium/crypto_auth_hmacsha1.h>
 
 #include <algorithm>
 #include <cstring>
