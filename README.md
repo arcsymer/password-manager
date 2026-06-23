@@ -1,7 +1,7 @@
 # pwman — Password Manager
 
 [![CI](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml)
-![tests: 78 passing](https://img.shields.io/badge/tests-78%20passing-brightgreen)
+![tests: 82 passing](https://img.shields.io/badge/tests-82%20passing-brightgreen)
 
 This is a learning and portfolio project. It hasn't been through a security audit, so
 please don't use it for real secrets.
@@ -20,7 +20,8 @@ revealing plaintext). TOTP two-factor tokens have to match the RFC 6238 standard
 
 **Solution:**
 - Argon2id (libsodium `crypto_pwhash`) derives a 256-bit key from the master password and a
-  random 16-byte salt, with INTERACTIVE memory/ops limits.
+  random 16-byte salt, with MODERATE memory/ops limits (~256 MiB, ~3 passes) — a deliberate
+  step up from INTERACTIVE to make offline brute-force materially more expensive.
 - XSalsa20-Poly1305 (`crypto_secretbox_easy`) encrypts the serialised vault with a random 24-byte
   nonce. The MAC catches any wrong-password or corruption case before any plaintext is returned.
 - TOTP uses libsodium `crypto_auth_hmacsha256` to implement RFC 4226/6238 deterministically,
@@ -35,7 +36,7 @@ revealing plaintext). TOTP two-factor tokens have to match the RFC 6238 standard
 
 | Layer        | Primitive                                | Library call                        |
 |--------------|------------------------------------------|-------------------------------------|
-| KDF          | Argon2id (INTERACTIVE ops/mem)           | `crypto_pwhash`                     |
+| KDF          | Argon2id (MODERATE ops/mem)              | `crypto_pwhash`                     |
 | Encryption   | XSalsa20-Poly1305 (authenticated)        | `crypto_secretbox_easy`             |
 | TOTP MAC     | HMAC-SHA256                              | `crypto_auth_hmacsha256`            |
 | CSPRNG       | OS-seeded                                | `randombytes_buf` / `randombytes_uniform` |
@@ -48,8 +49,8 @@ No custom cryptography: every primitive comes straight from libsodium.
 | Parameter    | Value                               | Rationale                                    |
 |--------------|-------------------------------------|----------------------------------------------|
 | Algorithm    | Argon2id                            | Resists both GPU and side-channel attacks    |
-| `opslimit`   | `crypto_pwhash_OPSLIMIT_INTERACTIVE`| ~3–4 iterations on a modern CPU             |
-| `memlimit`   | `crypto_pwhash_MEMLIMIT_INTERACTIVE`| 64 MiB memory hard                          |
+| `opslimit`   | `crypto_pwhash_OPSLIMIT_MODERATE`   | ~3 passes; raises offline cracking cost     |
+| `memlimit`   | `crypto_pwhash_MEMLIMIT_MODERATE`   | ~256 MiB memory hard                        |
 | Key length   | 32 bytes (256 bits)                 | Matches XSalsa20-Poly1305 key size          |
 | Salt         | 16 bytes, random per save           | Prevents precomputed (rainbow-table) attacks |
 
@@ -57,12 +58,14 @@ No custom cryptography: every primitive comes straight from libsodium.
 
 | Threat                                           | Mitigated? | How                                              |
 |--------------------------------------------------|------------|--------------------------------------------------|
-| Offline brute-force (attacker gets vault file)   | Yes        | Argon2id with 64 MiB memory cost per guess      |
+| Offline brute-force (attacker gets vault file)   | Yes        | Argon2id with ~256 MiB memory cost per guess (MODERATE) |
 | Ciphertext tampering / file corruption           | Yes        | Poly1305 MAC; decryption aborts on any mismatch |
 | Wrong-password oracle leaking plaintext          | Yes        | `decrypt_vault` throws before any plaintext returned |
 | Nonce reuse                                      | Yes        | New random 24-byte nonce on every `save_vault`  |
 | Key reuse across vaults                          | Yes        | Random salt regenerated on every `save_vault`   |
-| Memory disclosure of master password (CLI)       | Partial    | `sodium_memzero` wipes derived key; the master password `std::string` is on the stack and gets the standard destructor — a determined attacker with physical memory access could still find it |
+| Vault corruption on crash mid-save               | Yes        | `save_vault` writes to a temp file and `rename()`s it into place atomically; a crash leaves either the old or the fully-written new file |
+| Overwriting a real vault on wrong password (`add`) | Yes      | `add` only starts a fresh vault for a missing/empty file; a wrong master password or corrupt file raises `DecryptionError`/`FormatError` instead of clobbering the existing vault |
+| Memory disclosure of master password (CLI)       | Partial    | `sodium_memzero` wipes the derived key, and `secure_clear` wipes the master/export password `std::string`s on every exit path; copies made internally by libsodium are outside our control |
 | In-process plaintext in memory                   | Not mitigated | Decrypted entries live in `std::vector<Entry>` on the heap; no locked/guarded allocator is used |
 | Side-channel timing on MAC verification          | Yes        | libsodium's `crypto_secretbox_open_easy` uses constant-time comparison |
 | Plaintext buffer lingering in memory after decrypt | Partial  | `sodium_memzero` wipes the serialised plaintext vector before it is freed; individual `Entry` strings on the heap are not locked |
@@ -197,6 +200,27 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
+### Windows (MSYS2 / MinGW-w64)
+
+The project builds natively on Windows with the MinGW-w64 toolchain and a native
+libsodium from MSYS2 (no MSVC required). From an MSYS2 MinGW64 shell:
+
+```bash
+# One-time: install toolchain + libsodium
+pacman -S --noconfirm \
+  mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake \
+  mingw-w64-x86_64-ninja mingw-w64-x86_64-pkgconf \
+  mingw-w64-x86_64-libsodium
+
+# Configure + build (Ninja generator)
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+# Produces build/cli/pwman-cli.exe
+```
+
+libsodium is located via pkg-config, so no manual paths are needed when building
+from the MinGW64 shell. Both Linux and Windows are exercised in CI.
+
 ---
 
 ## Tests
@@ -205,7 +229,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-78 test cases across 10 files:
+82 test cases across 11 files:
 
 | File                         | Count | What is covered                                                               |
 |------------------------------|-------|-------------------------------------------------------------------------------|
@@ -219,6 +243,7 @@ ctest --test-dir build --output-on-failure
 | test_format_errors.cpp       | 7     | Wrong magic, truncated header, corrupt entry id → FormatError; bit-flipped ciphertext → DecryptionError; boundary size; zeroization path |
 | test_totp_verify.cpp         | 9     | totp_verify: window=0 strict, window=1 accepts ±1 step, rejects ±2 steps, wrong code, near-epoch underflow safety, 6-digit/60s period |
 | test_generator_ambiguous.cpp | 8     | exclude_ambiguous: full charset, length, no-digits combo, no-symbols combo, lowercase-only, digits-only, all-chars valid, default still emits ambiguous |
+| test_hardening.cpp           | 4     | Atomic `save_vault`: filesystem round-trip, no leftover `.tmp` on success, atomic overwrite of an existing vault, `secure_clear` wipes/empties secret strings |
 
 ### RFC 6238 SHA-256 test vectors (Appendix B)
 

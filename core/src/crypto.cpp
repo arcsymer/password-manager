@@ -4,9 +4,11 @@
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 namespace pwman {
 
@@ -159,6 +161,17 @@ Vault deserialize(const std::vector<uint8_t>& data) {
 }
 
 // ---------------------------------------------------------------------------
+// Secret hygiene
+// ---------------------------------------------------------------------------
+void secure_clear(std::string& secret) {
+    if (!secret.empty()) {
+        // sodium_memzero is guaranteed not to be elided by the optimiser.
+        sodium_memzero(&secret[0], secret.size());
+    }
+    secret.clear();
+}
+
+// ---------------------------------------------------------------------------
 // Encryption / decryption
 // ---------------------------------------------------------------------------
 static void sodium_init_once() {
@@ -189,8 +202,8 @@ std::vector<uint8_t> encrypt_vault(const Vault& vault,
                       master_password.c_str(),
                       master_password.size(),
                       salt,
-                      crypto_pwhash_OPSLIMIT_INTERACTIVE,
-                      crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                      crypto_pwhash_OPSLIMIT_MODERATE,
+                      crypto_pwhash_MEMLIMIT_MODERATE,
                       crypto_pwhash_ALG_ARGON2ID13) != 0) {
         throw std::runtime_error("KDF failed (out of memory?)");
     }
@@ -236,8 +249,8 @@ Vault decrypt_vault(const std::vector<uint8_t>& file_bytes,
                       master_password.c_str(),
                       master_password.size(),
                       salt,
-                      crypto_pwhash_OPSLIMIT_INTERACTIVE,
-                      crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                      crypto_pwhash_OPSLIMIT_MODERATE,
+                      crypto_pwhash_MEMLIMIT_MODERATE,
                       crypto_pwhash_ALG_ARGON2ID13) != 0) {
         throw std::runtime_error("KDF failed (out of memory?)");
     }
@@ -263,14 +276,37 @@ Vault decrypt_vault(const std::vector<uint8_t>& file_bytes,
 void save_vault(const std::string& path, const Vault& vault,
                 const std::string& master_password) {
     const std::vector<uint8_t> bytes = encrypt_vault(vault, master_password);
-    std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
-    if (!ofs) {
-        throw std::runtime_error("cannot open file for writing: " + path);
-    }
-    ofs.write(reinterpret_cast<const char*>(bytes.data()),
-              static_cast<std::streamsize>(bytes.size()));
-    if (!ofs) {
-        throw std::runtime_error("write error: " + path);
+
+    // Atomic write: serialise to a sibling temp file, flush+close, then rename
+    // it onto the destination. rename() is atomic on the same filesystem on both
+    // POSIX and Windows (std::filesystem::rename / MoveFileEx semantics), so a
+    // crash mid-write can never leave a half-written vault — readers see either
+    // the old file or the fully-written new one.
+    const std::string tmp_path = path + ".tmp";
+    {
+        std::ofstream ofs(tmp_path, std::ios::binary | std::ios::trunc);
+        if (!ofs) {
+            throw std::runtime_error("cannot open temp file for writing: " +
+                                     tmp_path);
+        }
+        ofs.write(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+        ofs.flush();
+        if (!ofs) {
+            std::error_code rm_ec;
+            std::filesystem::remove(tmp_path, rm_ec);
+            throw std::runtime_error("write error: " + tmp_path);
+        }
+    } // ofs destructor closes the file before the rename below.
+
+    std::error_code ec;
+    // std::filesystem::rename replaces an existing destination atomically.
+    std::filesystem::rename(tmp_path, path, ec);
+    if (ec) {
+        std::error_code rm_ec;
+        std::filesystem::remove(tmp_path, rm_ec);
+        throw std::runtime_error("atomic rename failed for " + path + ": " +
+                                 ec.message());
     }
 }
 

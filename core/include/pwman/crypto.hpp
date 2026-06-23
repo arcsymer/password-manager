@@ -18,6 +18,12 @@ struct FormatError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+// Securely wipe the contents of a std::string that held secret material (e.g.
+// the master password) using sodium_memzero, which the compiler is not allowed
+// to optimise away, then clear the string. Use this on password buffers as soon
+// as they are no longer needed so the plaintext does not linger on the heap.
+void secure_clear(std::string& secret);
+
 // ---------------------------------------------------------------------------
 // Serialisation (plaintext Vault <-> byte buffer)
 // ---------------------------------------------------------------------------
@@ -43,7 +49,9 @@ Vault                deserialize(const std::vector<uint8_t>& data);
 //   [nonce: crypto_secretbox_NONCEBYTES bytes]
 //   [ciphertext: len(plaintext) + crypto_secretbox_MACBYTES bytes]
 //
-// KDF: Argon2id (crypto_pwhash) with INTERACTIVE ops/mem limits.
+// KDF: Argon2id (crypto_pwhash) with MODERATE ops/mem limits
+//      (~256 MiB / ~3 passes) — a deliberate step up from INTERACTIVE to make
+//      offline brute-force of the master password materially more expensive.
 // Cipher: XSalsa20-Poly1305 (crypto_secretbox_easy).
 
 std::vector<uint8_t> encrypt_vault(const Vault& vault,
@@ -63,7 +71,9 @@ Vault load_vault(const std::string& path,
 // Change master password
 // ---------------------------------------------------------------------------
 // Decrypt the vault with old_password, re-encrypt with new_password, and
-// write the result back to the same path atomically (via a temp file swap).
+// write the result back to the same path. The write is atomic: save_vault()
+// serialises to a temp file and rename()s it into place, so a crash can never
+// corrupt the existing vault.
 // Throws DecryptionError if old_password is wrong, or std::runtime_error on
 // I/O failure.
 void change_password(const std::string& path,
