@@ -1,7 +1,7 @@
 # pwman — Password Manager
 
 [![CI](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/arcsymer/password-manager/actions/workflows/ci.yml)
-![tests: 53 passing](https://img.shields.io/badge/tests-53%20passing-brightgreen)
+![tests: 78 passing](https://img.shields.io/badge/tests-78%20passing-brightgreen)
 
 This is a learning and portfolio project. It hasn't been through a security audit, so
 please don't use it for real secrets.
@@ -65,6 +65,7 @@ No custom cryptography: every primitive comes straight from libsodium.
 | Memory disclosure of master password (CLI)       | Partial    | `sodium_memzero` wipes derived key; the master password `std::string` is on the stack and gets the standard destructor — a determined attacker with physical memory access could still find it |
 | In-process plaintext in memory                   | Not mitigated | Decrypted entries live in `std::vector<Entry>` on the heap; no locked/guarded allocator is used |
 | Side-channel timing on MAC verification          | Yes        | libsodium's `crypto_secretbox_open_easy` uses constant-time comparison |
+| Plaintext buffer lingering in memory after decrypt | Partial  | `sodium_memzero` wipes the serialised plaintext vector before it is freed; individual `Entry` strings on the heap are not locked |
 | Supply-chain attack on libsodium                 | Not mitigated | Relies on the system or MSYS2 libsodium package integrity |
 
 ### What is NOT protected
@@ -204,17 +205,20 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-53 test cases across 7 files:
+78 test cases across 10 files:
 
-| File                    | Count | What is covered                                                               |
-|-------------------------|-------|-------------------------------------------------------------------------------|
-| test_totp.cpp           | 3     | RFC 6238 SHA-256 vectors (6 timesteps), default params, invalid arg throws    |
-| test_base32.cpp         | 5     | RFC 4648 encode + decode vectors, case-insensitive decode, error, round-trip  |
-| test_crypto.cpp         | 7     | Serialise round-trip, empty vault, minimal entry, encrypt/decrypt, wrong password, truncated input, random salt uniqueness |
-| test_vault.cpp          | 13    | add (ids), find, remove, search by name/username/url/tags, case-insensitivity, empty vault, no matches |
-| test_vault_update.cpp   | 8     | update (fields, id preserved, other entries unaffected, empty vault), find_by_name (match, case-insensitive, absent, exact-only) |
-| test_strength.cpp       | 9     | estimate_strength across all five levels, label strings, entropy monotonicity  |
-| test_export_import.cpp  | 7     | export/import round-trip, wrong export password, empty vault, random nonce, separate export password, change_password happy path, wrong old password |
+| File                         | Count | What is covered                                                               |
+|------------------------------|-------|-------------------------------------------------------------------------------|
+| test_totp.cpp                | 3     | RFC 6238 SHA-256 vectors (6 timesteps), default params, invalid arg throws    |
+| test_base32.cpp              | 5     | RFC 4648 encode + decode vectors, case-insensitive decode, error, round-trip  |
+| test_crypto.cpp              | 7     | Serialise round-trip, empty vault, minimal entry, encrypt/decrypt, wrong password, truncated input, random salt uniqueness |
+| test_vault.cpp               | 13    | add (ids), find, remove, search by name/username/url/tags, case-insensitivity, empty vault, no matches |
+| test_vault_update.cpp        | 8     | update (fields, id preserved, other entries unaffected, empty vault), find_by_name (match, case-insensitive, absent, exact-only) |
+| test_strength.cpp            | 9     | estimate_strength across all five levels, label strings, entropy monotonicity  |
+| test_export_import.cpp       | 7     | export/import round-trip, wrong export password, empty vault, random nonce, separate export password, change_password happy path, wrong old password |
+| test_format_errors.cpp       | 7     | Wrong magic, truncated header, corrupt entry id → FormatError; bit-flipped ciphertext → DecryptionError; boundary size; zeroization path |
+| test_totp_verify.cpp         | 9     | totp_verify: window=0 strict, window=1 accepts ±1 step, rejects ±2 steps, wrong code, near-epoch underflow safety, 6-digit/60s period |
+| test_generator_ambiguous.cpp | 8     | exclude_ambiguous: full charset, length, no-digits combo, no-symbols combo, lowercase-only, digits-only, all-chars valid, default still emits ambiguous |
 
 ### RFC 6238 SHA-256 test vectors (Appendix B)
 
@@ -312,6 +316,8 @@ pwman-cli generate --length 20
 
 pwman-cli generate --length 16 --no-symbols
 pwman-cli generate --length 12 --no-symbols --no-digits
+# Exclude visually ambiguous characters (0, O, I, l, 1) — useful for typed passwords
+pwman-cli generate --length 20 --no-ambiguous
 ```
 
 ---

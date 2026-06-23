@@ -124,7 +124,13 @@ Vault deserialize(const std::vector<uint8_t>& data) {
 
         expect_field_sep();
         std::string id_str = next_field(kFieldSep);
-        e.id = std::stoull(id_str);
+        try {
+            e.id = std::stoull(id_str);
+        } catch (const std::invalid_argument&) {
+            throw FormatError("corrupt entry id (not a number): " + id_str);
+        } catch (const std::out_of_range&) {
+            throw FormatError("corrupt entry id (out of range): " + id_str);
+        }
 
         e.name     = next_field(kFieldSep);
         e.username = next_field(kFieldSep);
@@ -248,7 +254,10 @@ Vault decrypt_vault(const std::vector<uint8_t>& file_bytes,
         throw DecryptionError("decryption failed: wrong password or corrupt data");
     }
 
-    return deserialize(plaintext);
+    Vault result = deserialize(plaintext);
+    // Zeroize the plaintext buffer that held raw passwords before it is freed.
+    sodium_memzero(plaintext.data(), plaintext.size());
+    return result;
 }
 
 void save_vault(const std::string& path, const Vault& vault,

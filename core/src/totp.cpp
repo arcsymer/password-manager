@@ -133,4 +133,32 @@ std::string totp_string(const std::vector<uint8_t>& key,
     return oss.str();
 }
 
+// ---------------------------------------------------------------------------
+// TOTP clock-drift tolerant verification (RFC 6238 §5.2)
+// ---------------------------------------------------------------------------
+bool totp_verify(const std::vector<uint8_t>& key,
+                 uint32_t                    code,
+                 uint64_t                    unix_time,
+                 uint32_t                    digits,
+                 uint32_t                    period,
+                 uint32_t                    window) {
+    // Check the current step plus/minus `window` steps.
+    // We work in signed space to handle the case where unix_time < window*period
+    // (e.g. unit tests using T=0 with window=1 would otherwise underflow uint64).
+    const int64_t  step_size   = static_cast<int64_t>(period);
+    const int64_t  t_signed    = static_cast<int64_t>(unix_time);
+    const int64_t  win         = static_cast<int64_t>(window);
+
+    for (int64_t offset = -win; offset <= win; ++offset) {
+        const int64_t t_adj = t_signed + offset * step_size;
+        if (t_adj < 0) {
+            continue; // timestep before epoch — skip
+        }
+        if (totp(key, static_cast<uint64_t>(t_adj), digits, period) == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace pwman

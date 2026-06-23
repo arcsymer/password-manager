@@ -45,4 +45,19 @@ std::string totp_string(const std::vector<uint8_t>& key,
                         uint32_t                    digits = 6,
                         uint32_t                    period = 30);
 
+// ---------------------------------------------------------------------------
+// TOTP clock-drift tolerant verification (RFC 6238 §5.2)
+// ---------------------------------------------------------------------------
+// Returns true if `code` matches the TOTP value for any timestep T in
+// [unix_time - window*period, unix_time + window*period].
+// A window of 1 accepts one step before and one step after the current step,
+// which is the recommended tolerance for up to ±30 s of clock skew.
+// `window` = 0 checks only the current timestep (strict mode).
+bool totp_verify(const std::vector<uint8_t>& key,
+                 uint32_t                    code,
+                 uint64_t                    unix_time,
+                 uint32_t                    digits = 6,
+                 uint32_t                    period = 30,
+                 uint32_t                    window = 1);
+
 } // namespace pwman

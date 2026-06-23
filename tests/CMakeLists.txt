@@ -21,6 +21,9 @@ add_executable(pwman-tests
     test_vault_update.cpp
     test_strength.cpp
     test_export_import.cpp
+    test_format_errors.cpp
+    test_totp_verify.cpp
+    test_generator_ambiguous.cpp
 )
 
 target_compile_features(pwman-tests PRIVATE cxx_std_17)

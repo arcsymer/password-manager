@@ -23,6 +23,24 @@ std::string generate_password(const GeneratorOptions& opts) {
         throw std::invalid_argument("no character classes selected");
     }
 
+    // Strip visually ambiguous characters when requested.
+    // Removed: '0' (zero), 'O' (capital-o), 'I' (capital-i), 'l' (lowercase-L), '1' (one).
+    if (opts.exclude_ambiguous) {
+        static const std::string kAmbiguous = "0OIl1";
+        std::string filtered;
+        filtered.reserve(alphabet.size());
+        for (char c : alphabet) {
+            if (kAmbiguous.find(c) == std::string::npos) {
+                filtered.push_back(c);
+            }
+        }
+        alphabet = std::move(filtered);
+        if (alphabet.empty()) {
+            throw std::invalid_argument(
+                "no characters remain after excluding ambiguous characters");
+        }
+    }
+
     if (sodium_init() < 0) {
         throw std::runtime_error("libsodium initialisation failed");
     }

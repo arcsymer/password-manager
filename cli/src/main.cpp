@@ -16,7 +16,7 @@
 //   pwman-cli --vault <file> --password <pass> export --out <file> --export-password <p>
 //   pwman-cli import --in <file> --export-password <p> --vault <out> --password <p>
 //   pwman-cli totp --secret <base32-secret> [--digits 6] [--period 30] [--time <unix>]
-//   pwman-cli generate [--length 20] [--no-symbols] [--no-digits] [--no-upper] [--no-lower]
+//   pwman-cli generate [--length 20] [--no-symbols] [--no-digits] [--no-upper] [--no-lower] [--no-ambiguous]
 //   pwman-cli strength <password>
 //
 // All flags are parsed from argv so CI scripts can run non-interactively.
@@ -70,6 +70,7 @@ struct Args {
     bool                     gen_no_digits{false};
     bool                     gen_no_upper{false};
     bool                     gen_no_lower{false};
+    bool                     gen_no_ambiguous{false};
     // Update flags: only update fields that were explicitly supplied.
     bool                     update_name{false};
     bool                     update_username{false};
@@ -183,6 +184,8 @@ Args parse(int argc, char** argv_raw) {
             a.gen_no_upper = true;
         } else if (s == "--no-lower") {
             a.gen_no_lower = true;
+        } else if (s == "--no-ambiguous") {
+            a.gen_no_ambiguous = true;
         } else if (a.command.empty() && s[0] != '-') {
             a.command = s;
         } else if (!a.command.empty() && s[0] != '-') {
@@ -443,11 +446,12 @@ static void cmd_totp(const Args& a) {
 
 static void cmd_generate(const Args& a) {
     pwman::GeneratorOptions opts;
-    opts.length    = a.gen_length;
-    opts.symbols   = !a.gen_no_symbols;
-    opts.digits    = !a.gen_no_digits;
-    opts.uppercase = !a.gen_no_upper;
-    opts.lowercase = !a.gen_no_lower;
+    opts.length             = a.gen_length;
+    opts.symbols            = !a.gen_no_symbols;
+    opts.digits             = !a.gen_no_digits;
+    opts.uppercase          = !a.gen_no_upper;
+    opts.lowercase          = !a.gen_no_lower;
+    opts.exclude_ambiguous  = a.gen_no_ambiguous;
     const std::string pw = pwman::generate_password(opts);
     const pwman::StrengthResult sr = pwman::estimate_strength(pw);
     std::cout << pw << "\n";
@@ -562,7 +566,7 @@ int main(int argc, char** argv) {
                 "  pwman-cli totp --secret <base32> [--digits 6]"
                 " [--period 30] [--time <unix>]\n"
                 "  pwman-cli generate [--length 20] [--no-symbols]"
-                " [--no-digits] [--no-upper] [--no-lower]\n"
+                " [--no-digits] [--no-upper] [--no-lower] [--no-ambiguous]\n"
                 "  pwman-cli strength <password>\n";
             return 1;
         }

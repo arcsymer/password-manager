@@ -11,6 +11,9 @@ struct GeneratorOptions {
     bool     lowercase{true};
     bool     digits{true};
     bool     symbols{true};
+    // When true, removes visually ambiguous characters from the alphabet:
+    // '0', 'O', 'I', 'l', '1'  (easy to confuse when reading/typing).
+    bool     exclude_ambiguous{false};
 };
 
 // Generate a cryptographically random password using libsodium randombytes_buf.
