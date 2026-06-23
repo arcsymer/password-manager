@@ -24,6 +24,7 @@ add_executable(pwman-tests
     test_format_errors.cpp
     test_totp_verify.cpp
     test_generator_ambiguous.cpp
+    test_hardening.cpp
 )
 
 target_compile_features(pwman-tests PRIVATE cxx_std_17)
