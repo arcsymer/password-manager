@@ -32,11 +32,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -224,11 +226,20 @@ static void cmd_unlock(const Args& a) {
 
 static void cmd_add(const Args& a) {
     pwman::Vault v;
-    try {
+    // Only treat a genuinely absent (or zero-byte placeholder) file as
+    // "new vault". A 0-byte file holds no data to lose, so starting fresh is
+    // safe — but if the vault file exists with content, a wrong master password
+    // (DecryptionError) or corrupt/unknown format (FormatError) MUST propagate,
+    // otherwise we would silently create a fresh vault and overwrite the real
+    // one on save (the bug this guards against).
+    std::error_code ec;
+    const bool exists   = std::filesystem::exists(a.vault_path, ec);
+    const auto file_size = exists ? std::filesystem::file_size(a.vault_path, ec)
+                                  : 0;
+    if (exists && file_size > 0) {
         v = pwman::load_vault(a.vault_path, a.master_password);
-    } catch (const std::runtime_error&) {
-        // File doesn't exist yet — create a new vault.
     }
+    // else: no vault yet (missing or empty file) — start with an empty vault.
 
     pwman::Entry e;
     e.name     = a.entry_name;
@@ -469,11 +480,26 @@ static void cmd_strength(const Args& a) {
               << " (" << static_cast<int>(sr.entropy_bits) << " bits)\n";
 }
 
-// ---------------------------------------------------------------------------
-int main(int argc, char** argv) {
-    try {
-        const Args a = parse(argc, argv);
+// Securely wipe every secret an Args may hold once the command has finished,
+// so master/export passwords do not linger in heap memory until process exit.
+static void wipe_secrets(Args& a) {
+    pwman::secure_clear(a.master_password);
+    pwman::secure_clear(a.new_password);
+    pwman::secure_clear(a.export_password);
+    pwman::secure_clear(a.entry_password);
+}
 
+// RAII guard so secrets are wiped on every exit path, including exceptions
+// and std::exit() inside command handlers.
+namespace {
+struct SecretScrubber {
+    Args& a;
+    ~SecretScrubber() { wipe_secrets(a); }
+};
+} // namespace
+
+// ---------------------------------------------------------------------------
+static int run_cli(Args& a) {
         if (a.command == "unlock") {
             if (a.vault_path.empty() || a.master_password.empty()) {
                 std::cerr << "ERROR: unlock requires --vault and --password\n";
@@ -570,9 +596,19 @@ int main(int argc, char** argv) {
                 "  pwman-cli strength <password>\n";
             return 1;
         }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+int main(int argc, char** argv) {
+    Args a;
+    // Wipe all secret buffers on every return path of main (normal or thrown).
+    SecretScrubber scrubber{a};
+    try {
+        a = parse(argc, argv);
+        return run_cli(a);
     } catch (const std::exception& ex) {
         std::cerr << "ERROR: " << ex.what() << "\n";
         return 1;
     }
-    return 0;
 }
